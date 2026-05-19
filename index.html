@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoCull</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f0f0;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        .header {
+            display: flex;
+            height: 70%;
+            min-height: 300px;
+        }
+        
+        .operation-panel {
+            width: 30%;
+            background-color: #fff;
+            padding: 20px;
+            border-right: 1px solid #ccc;
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+        
+        .media-panel {
+            width: 70%;
+            background-color: #fff;
+            padding: 20px;
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+        
+        .console {
+            height: 30%;
+            min-height: 150px;
+            background-color: #000;
+            color: #00ff00;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            overflow-y: auto;
+            border-top: 1px solid #ccc;
+            box-sizing: border-box;
+        }
+        
+        .control-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .sort-controls select {
+            padding: 5px;
+            margin-right: 10px;
+        }
+        
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .image-item {
+            position: relative;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            overflow: hidden;
+            background-color: #f9f9f9;
+        }
+        
+        .image-item:hover {
+            box-shadow: 0 0 10px rgba(0,0,0,0.3);
+        }
+        
+        .image-preview {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            display: block;
+        }
+        
+        .image-info {
+            padding: 5px;
+            font-size: 12px;
+        }
+        
+        .image-score {
+            font-weight: bold;
+            color: #007bff;
+        }
+        
+        button, input[type="file"] {
+            margin: 5px 0;
+            padding: 8px 12px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        button:hover {
+            background-color: #0056b3;
+        }
+        
+        input[type="file"] {
+            background-color: #28a745;
+            width: 100%;
+        }
+        
+        input[type="file"]:hover {
+            background-color: #218838;
+        }
+        
+        select {
+            padding: 5px;
+            margin: 5px 0;
+            width: 100%;
+        }
+        
+        .remove-controls {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+        }
+        
+        .remove-controls input {
+            width: 60px;
+            padding: 5px;
+        }
+        
+        h2 {
+            margin-top: 0;
+        }
+        
+        h3 {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="operation-panel">
+                <h2>操作面板</h2>
+                <input type="file" id="select-files" multiple accept="image/*">
+                
+                <h3>选片预设</h3>
+                <select id="presets-list"></select>
+                <div style="margin: 10px 0;">
+                    <label>
+                        <input type="checkbox" id="force-no-delete">
+                        强制不删除且不导出（半自动模式）
+                    </label>
+                </div>
+                <button id="start-culling">开始选片</button>
+                
+                <div class="remove-controls">
+                    <h3>移除图片</h3>
+                    <div>
+                        <label>移除后<input type="number" id="remove-count" min="1" value="10">张</label>
+                        <button id="remove-by-count">移除</button>
+                    </div>
+                    <div>
+                        <label>移除后<input type="number" id="remove-percent" min="1" max="100" value="20">%图片</label>
+                        <button id="remove-by-percent">移除</button>
+                    </div>
+                    
+                    <h3>导出</h3>
+                    <button id="export-images">导出当前图片</button>
+                </div>
+            </div>
+            
+            <div class="media-panel">
+                <div class="control-bar">
+                    <h2>媒体区</h2>
+                    <div class="sort-controls">
+                        <label>排序依据:</label>
+                        <select id="sort-order">
+                            <option value="filename">文件名</option>
+                            <option value="datetime">拍摄时间</option>
+                            <option value="resolution">分辨率</option>
+                            <option value="score">总评分</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="image-grid" id="image-container">
+                    <!-- 图片将在这里显示 -->
+                </div>
+            </div>
+        </div>
+        
+        <div class="console" id="console-output">
+            <!-- 控制台输出将在这里显示 -->
+        </div>
+    </div>
+
+    <script>
+        // 全局变量
+        let imagesData = [];
+        let currentSortOrder = 'filename';
+        let tempDir = '';
+        let logPollingInterval = null;
+        
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始化控制台输出重定向
+            redirectConsoleOutput();
+            
+            // 加载预设列表
+            loadPresets();
+            
+            // 绑定事件
+            bindEvents();
+            
+            console.log("欢迎使用 AutoCull 网页版！");
+        });
+        
+        // 重定向控制台输出到页面
+        function redirectConsoleOutput() {
+            const consoleOutput = document.getElementById('console-output');
+            // 页面加载时先获取一次日志
+            fetchLogs();
+            // 开始轮询日志
+            startLogPolling();
+        }
+        
+        // 开始轮询日志
+        function startLogPolling() {
+            // 每500毫秒获取一次新的日志
+            logPollingInterval = setInterval(fetchLogs, 500);
+        }
+        
+        // 获取日志
+        function fetchLogs() {
+            fetch('/logs')
+            .then(response => response.text())
+            .then(data => {
+                if (data) {
+                    const consoleOutput = document.getElementById('console-output');
+                    const lines = data.split('\n');
+                    let addedContent = false;
+                    
+                    lines.forEach(line => {
+                        if (line.trim() !== '') {
+                            // 检查是否已存在相同内容
+                            const existingLogs = Array.from(consoleOutput.children);
+                            const isDuplicate = existingLogs.some(el => el.textContent === line);
+                            
+                            if (!isDuplicate) {
+                                const messageElement = document.createElement('div');
+                                messageElement.textContent = line;
+                                consoleOutput.appendChild(messageElement);
+                                addedContent = true;
+                            }
+                        }
+                    });
+                    
+                    // 如果添加了新内容，滚动到底部
+                    if (addedContent) {
+                        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+                    }
+                }
+            })
+            .catch(error => {
+                // 只在需要调试时才输出错误信息
+                // console.error('获取日志时出错:', error);
+            });
+        }
+        
+        // 添加内容到控制台
+        function appendToConsole(message) {
+            const consoleOutput = document.getElementById('console-output');
+            const messageElement = document.createElement('div');
+            messageElement.textContent = message;
+            consoleOutput.appendChild(messageElement);
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+        
+        // 加载预设列表
+        function loadPresets() {
+            fetch('/api/presets')
+                .then(response => response.json())
+                .then(data => {
+                    const presetsList = document.getElementById('presets-list');
+                    presetsList.innerHTML = '';
+                    
+                    Object.keys(data).forEach(key => {
+                        const option = document.createElement('option');
+                        option.value = key;
+                        option.textContent = key; // 直接使用键名而不是"预设"+key
+                        presetsList.appendChild(option);
+                    });
+                })
+                .catch(error => {
+                    console.error('加载预设失败:', error);
+                });
+        }
+        
+        // 绑定事件
+        function bindEvents() {
+            // 导入文件
+            document.getElementById('select-files').addEventListener('change', function(event) {
+                const files = event.target.files;
+                if (files.length > 0) {
+                    importFiles(files);
+                    // 重置文件输入框，允许重复选择相同的文件
+                    this.value = '';
+                }
+            });
+            
+            // 开始选片
+            document.getElementById('start-culling').addEventListener('click', function() {
+                const presetKey = document.getElementById('presets-list').value;
+                startCulling(presetKey);
+            });
+            
+            // 排序变化
+            document.getElementById('sort-order').addEventListener('change', function() {
+                currentSortOrder = this.value;
+                renderImages();
+            });
+            
+            // 移除指定数量图片
+            document.getElementById('remove-by-count').addEventListener('click', function() {
+                const count = parseInt(document.getElementById('remove-count').value) || 0;
+                removeImagesByCount(count);
+            });
+            
+            // 移除指定百分比图片
+            document.getElementById('remove-by-percent').addEventListener('click', function() {
+                const percent = parseInt(document.getElementById('remove-percent').value) || 0;
+                removeImagesByPercent(percent);
+            });
+            
+            // 导出图片
+            document.getElementById('export-images').addEventListener('click', function() {
+                exportImages();
+            });
+        }
+        
+        // 导入文件
+        function importFiles(files) {
+            const formData = new FormData();
+            for (let i = 0; i < files.length; i++) {
+                formData.append('files', files[i]);
+            }
+            
+            fetch('/api/import', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 增量导入：将新图片添加到现有列表，而不是替换
+                    const existingPaths = new Set(imagesData.map(img => img.path));
+                    data.images.forEach(img => {
+                        // 避免重复添加同一路径的图片
+                        if (!existingPaths.has(img.path)) {
+                            imagesData.push(img);
+                        }
+                    });
+                    tempDir = data.temp_dir;
+                    renderImages();
+                    console.log(`成功导入 ${files.length} 张图片，当前总图片数：${imagesData.length}`);
+                } else {
+                    console.error('导入失败:', data.message);
+                }
+            })
+            .catch(error => {
+                console.error('导入过程中出错:', error);
+            });
+        }
+        
+        // 开始选片
+        function startCulling(presetKey) {
+            if (imagesData.length === 0) {
+                console.log("请先导入图片");
+                return;
+            }
+            
+            const forceNoDelete = document.getElementById('force-no-delete').checked;
+            console.log(`使用预设 ${presetKey} 开始选片...${forceNoDelete ? ' [强制不删除模式]' : ''}`);
+            
+            fetch('/api/cull', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    preset_key: presetKey,
+                    image_paths: imagesData.map(img => img.path),
+                    force_no_delete: forceNoDelete
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 更新图片数据
+                    imagesData = data.images;
+                    renderImages();
+                    console.log("选片完成");
+                } else {
+                    console.error('选片失败:', data.message);
+                }
+            })
+            .catch(error => {
+                console.error('选片过程中出错:', error);
+            });
+        }
+        
+        // 渲染图片
+        function renderImages() {
+            const container = document.getElementById('image-container');
+            container.innerHTML = '';
+            
+            if (imagesData.length === 0) {
+                container.innerHTML = '<p>暂无图片</p>';
+                return;
+            }
+            
+            // 根据当前排序方式排序
+            const sortedImages = [...imagesData];
+            switch(currentSortOrder) {
+                case 'filename':
+                    sortedImages.sort((a, b) => a.filename.localeCompare(b.filename));
+                    break;
+                case 'datetime':
+                    sortedImages.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+                    break;
+                case 'resolution':
+                    sortedImages.sort((a, b) => b.width * b.height - a.width * a.height);
+                    break;
+                case 'score':
+                    sortedImages.sort((a, b) => (b.score || 0) - (a.score || 0));
+                    break;
+            }
+            
+            sortedImages.forEach(img => {
+                const imageItem = document.createElement('div');
+                imageItem.className = 'image-item';
+                
+                // 构建图片信息
+                let scoreInfo = '';
+                if (img.score !== undefined) {
+                    scoreInfo = `<div class="image-score">总评分: ${img.score.toFixed(4)}</div>`;
+                    if (img.scores && img.score_names) {
+                        img.scores.forEach((s, i) => {
+                            const name = img.score_names[i] || `分项${i+1}`;
+                            scoreInfo += `<div>${name}: ${s.toFixed(4)}</div>`;
+                        });
+                    }
+                } else {
+                    scoreInfo = '<div class="image-score">未评分</div>';
+                }
+                
+                imageItem.innerHTML = `
+                    <img src="/api/thumbnail/${encodeURIComponent(img.path)}" alt="${img.filename}" class="image-preview">
+                    <div class="image-info">
+                        <div>${img.filename}</div>
+                        ${scoreInfo}
+                    </div>
+                `;
+                
+                container.appendChild(imageItem);
+            });
+        }
+        
+        // 移除指定数量图片
+        function removeImagesByCount(count) {
+            if (count <= 0 || imagesData.length <= count) {
+                console.log("无效的数量或剩余图片不足");
+                return;
+            }
+            
+            // 按当前排序方式排序后移除末尾的图片
+            let sortedImages = [...imagesData];
+            switch(currentSortOrder) {
+                case 'filename':
+                    sortedImages.sort((a, b) => a.filename.localeCompare(b.filename));
+                    break;
+                case 'datetime':
+                    sortedImages.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+                    break;
+                case 'resolution':
+                    sortedImages.sort((a, b) => b.width * b.height - a.width * a.height);
+                    break;
+                case 'score':
+                    sortedImages.sort((a, b) => (b.score || 0) - (a.score || 0));
+                    break;
+            }
+            
+            // 移除末尾count张图片
+            const pathsToRemove = sortedImages.slice(-count).map(img => img.path);
+            imagesData = imagesData.filter(img => !pathsToRemove.includes(img.path));
+            
+            renderImages();
+            console.log(`已移除 ${count} 张图片`);
+        }
+        
+        // 移除指定百分比图片
+        function removeImagesByPercent(percent) {
+            if (percent <= 0 || percent >= 100) {
+                console.log("无效的百分比");
+                return;
+            }
+            
+            const count = Math.floor(imagesData.length * percent / 100);
+            removeImagesByCount(count);
+        }
+        
+        // 导出图片
+        function exportImages() {
+            if (imagesData.length === 0) {
+                console.log("没有图片可导出");
+                return;
+            }
+            
+            fetch('/api/export', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    image_paths: imagesData.map(img => img.path)
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log(`成功导出 ${imagesData.length} 张图片到: ${data.output_folder}`);
+                } else {
+                    console.error('导出失败:', data.message);
+                }
+            })
+            .catch(error => {
+                console.error('导出过程中出错:', error);
+            });
+        }
+    </script>
+</body>
+</html>
