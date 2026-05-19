@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户审美测试系统</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f9; color: #333; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        h1 { text-align: center; color: #2c3e50; }
+        .instruction { text-align: center; margin-bottom: 30px; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; }
+        .image-card { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); transition: transform 0.2s; display: flex; flex-direction: column; }
+        .image-card:hover { transform: translateY(-5px); }
+        .image-container { height: 200px; overflow: hidden; background: #eee; display: flex; align-items: center; justify-content: center; }
+        .image-container img { width: 100%; height: 100%; object-fit: cover; }
+        .rating-section { padding: 15px; text-align: center; }
+        .rating-label { display: block; margin-bottom: 10px; font-weight: bold; }
+        input[type="range"] { width: 100%; cursor: pointer; }
+        .score-val { font-weight: bold; color: #3498db; }
+        #submit-btn { display: block; width: 200px; margin: 40px auto; padding: 15px; background-color: #27ae60; color: white; border: none; border-radius: 5px; font-size: 18px; cursor: pointer; transition: background 0.3s; }
+        #submit-btn:hover { background-color: #219150; }
+        #submit-btn:disabled { background-color: #95a5a6; cursor: not-allowed; }
+        .loading { text-align: center; display: none; }
+    </style>
+</head>
+<body>
+
+    <h1>🎨 个人审美测试</h1>
+    <div class="instruction">
+        <p>请浏览下方的图片，并根据您的喜爱程度进行打分（1-10 分）。</p>
+        <p>1 分表示非常不喜欢，10 分表示非常喜欢。完成后点击“提交分析”。</p>
+    </div>
+
+    <div id="loading" class="loading">
+        <h3>正在加载测试图片...</h3>
+    </div>
+
+    <div class="image-grid" id="image-grid">
+        <!-- 图片将通过 JS 动态插入 -->
+    </div>
+
+    <button id="submit-btn" onclick="submitData()" disabled>提交分析</button>
+
+    <script>
+        let imageDataList = [];
+
+        // 页面加载时获取测试图片
+        window.onload = async function() {
+            document.getElementById('loading').style.display = 'block';
+            try {
+                const response = await fetch('/api/get_test_images');
+                const data = await response.json();
+                imageDataList = data.images;
+                renderImages(imageDataList);
+                document.getElementById('submit-btn').disabled = false;
+            } catch (error) {
+                alert("加载图片失败，请检查后端服务是否运行。");
+                console.error(error);
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        };
+
+        function renderImages(images) {
+            const grid = document.getElementById('image-grid');
+            grid.innerHTML = '';
+            images.forEach((img, index) => {
+                const card = document.createElement('div');
+                card.className = 'image-card';
+                card.innerHTML = `
+                    <div class="image-container">
+                        <img src="${img.url}" alt="Test Image ${index}" loading="lazy">
+                    </div>
+                    <div class="rating-section">
+                        <label class="rating-label">喜爱度评分：<span id="score-${index}" class="score-val">5</span></label>
+                        <input type="range" min="1" max="10" value="5"
+                            oninput="document.getElementById('score-${index}').innerText = this.value"
+                            data-id="${img.id}">
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        async function submitData() {
+            const btn = document.getElementById('submit-btn');
+            btn.disabled = true;
+            btn.innerText = "正在计算审美模型...";
+
+            const ratings = [];
+            const inputs = document.querySelectorAll('input[type="range"]');
+            inputs.forEach(input => {
+                ratings.push({
+                    id: input.getAttribute('data-id'),
+                    score: parseInt(input.value)
+                });
+            });
+
+            try {
+                const response = await fetch('/api/submit_profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ratings: ratings })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(`测试完成！您的审美模型已保存。\n文件路径：${result.file_path}`);
+                    btn.innerText = "提交成功";
+                    btn.style.backgroundColor = "#27ae60";
+                } else {
+                    alert("保存失败：" + result.message);
+                    btn.disabled = false;
+                    btn.innerText = "重新提交";
+                }
+            } catch (error) {
+                alert("网络错误，提交失败。");
+                btn.disabled = false;
+                btn.innerText = "重新提交";
+            }
+        }
+    </script>
+</body>
+</html>
